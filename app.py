@@ -9,7 +9,7 @@ st.set_page_config(
 
 # ── Anthropic API key ──────────────────────────────────────────
 # Paste your key from console.anthropic.com between the quotes
-ANTHROPIC_API_KEY = "ANTHROPIC_API_KEY = st.secrets["ANTHROPIC_API_KEY"]"
+ANTHROPIC_API_KEY = st.secrets["ANTHROPIC_API_KEY"]
 
 # ── Header ─────────────────────────────────────────────────────
 st.markdown("## 🏭 Tata Steel — Recruitment & CV Evaluation Tool")
