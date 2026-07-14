@@ -2,6 +2,64 @@ import streamlit as st
 import anthropic
 import json
 
+# ── Demo data defined at top level ────────────────────────────
+DEMO_JD = """Job: Maintenance Engineer — Cold Rolling Mill, Tata Steel Jamshedpur
+
+Requirements:
+- B.Tech / B.E. in Mechanical or Electrical Engineering
+- Minimum 3 years experience in steel plant or heavy manufacturing
+- Knowledge of hydraulic and pneumatic systems
+- Preventive maintenance planning experience
+- SAP PM module experience preferred
+- ISO 45001 / safety certification preferred
+- Ability to work rotating shifts
+- Team coordination and reporting skills"""
+
+DEMO_CANDIDATES = [
+    {
+        "name": "Ankit Verma",
+        "cv": """B.Tech Mechanical Engineering, NIT Jamshedpur, 2018
+5 years at Jindal Steel, Cold Rolling department
+Extensive hydraulic and pneumatic systems maintenance
+SAP PM module — daily user for 3 years
+ISO 45001 certified (2021)
+Led a team of 6 maintenance technicians
+Comfortable with rotating shifts
+Implemented preventive maintenance schedule reducing downtime by 18%"""
+    },
+    {
+        "name": "Priya Nair",
+        "cv": """B.E. Electrical Engineering, BITS Pilani, 2020
+2 years at Tata Motors, assembly line maintenance
+Basic knowledge of pneumatic systems
+No SAP experience
+Shift work experience: yes
+Strong documentation and reporting skills
+Currently pursuing ISO certification"""
+    },
+    {
+        "name": "Suresh Kumar",
+        "cv": """Diploma in Mechanical Engineering, 2015
+8 years at SAIL Bokaro, blast furnace maintenance
+Expert in hydraulic systems
+No formal SAP training but Excel-based maintenance logs
+No ISO certification
+Works day shifts only
+Managed 4-person team"""
+    },
+    {
+        "name": "Meera Joshi",
+        "cv": """B.Tech Mechanical, VNIT Nagpur, 2019
+4 years at ArcelorMittal Hazira, hot strip mill maintenance
+Hydraulic and pneumatic systems — daily work
+SAP PM module trained (2022)
+ISO 45001 in progress
+Rotating shifts — comfortable
+Co-authored plant's preventive maintenance SOPs"""
+    },
+]
+
+
 def show_cv_evaluator(api_key: str):
 
     st.subheader("AI-Powered CV Evaluator & Shortlist")
@@ -10,10 +68,26 @@ def show_cv_evaluator(api_key: str):
         "The AI will score each CV against the requirements and rank the shortlist."
     )
 
-    # ── Job description input ──────────────────────────────────
+    # ── Initialise session state ───────────────────────────────
+    if "demo_loaded" not in st.session_state:
+        st.session_state.demo_loaded = False
+    if "num_candidates" not in st.session_state:
+        st.session_state.num_candidates = 2
+    if "results" not in st.session_state:
+        st.session_state.results = None
+
+    # ── Demo loader button ─────────────────────────────────────
+    if st.button("📂 Load demo data (Maintenance Engineer role)"):
+        st.session_state.demo_loaded = True
+        st.session_state.num_candidates = 4
+        st.session_state.results = None
+
+    # ── Job description ────────────────────────────────────────
     st.markdown("#### Step 1 — Enter job requirements")
+
     jd = st.text_area(
         "Job description / requirements",
+        value=DEMO_JD if st.session_state.demo_loaded else "",
         height=180,
         placeholder=(
             "Example:\n"
@@ -23,94 +97,31 @@ def show_cv_evaluator(api_key: str):
             "- SAP PM module experience preferred\n"
             "- ISO 45001 safety certification\n"
             "- Rotating shift flexibility"
-        )
+        ),
+        key="jd_input"
     )
 
-    # ── Demo loader ────────────────────────────────────────────
-    if st.button("📂 Load demo data (Maintenance Engineer role)"):
-        st.session_state["demo_loaded"] = True
-
-    if st.session_state.get("demo_loaded"):
-        jd = (
-            "Job: Maintenance Engineer — Cold Rolling Mill, Tata Steel Jamshedpur\n\n"
-            "Requirements:\n"
-            "- B.Tech / B.E. in Mechanical or Electrical Engineering\n"
-            "- Minimum 3 years experience in steel plant or heavy manufacturing\n"
-            "- Knowledge of hydraulic and pneumatic systems\n"
-            "- Preventive maintenance planning experience\n"
-            "- SAP PM module experience preferred\n"
-            "- ISO 45001 / safety certification preferred\n"
-            "- Ability to work rotating shifts\n"
-            "- Team coordination and reporting skills"
-        )
-        demo_candidates = [
-            {
-                "name": "Ankit Verma",
-                "cv": (
-                    "B.Tech Mechanical Engineering, NIT Jamshedpur, 2018\n"
-                    "5 years at Jindal Steel, Cold Rolling department\n"
-                    "Extensive hydraulic and pneumatic systems maintenance\n"
-                    "SAP PM module — daily user for 3 years\n"
-                    "ISO 45001 certified (2021)\n"
-                    "Led a team of 6 maintenance technicians\n"
-                    "Comfortable with rotating shifts\n"
-                    "Implemented preventive maintenance schedule reducing downtime by 18%"
-                )
-            },
-            {
-                "name": "Priya Nair",
-                "cv": (
-                    "B.E. Electrical Engineering, BITS Pilani, 2020\n"
-                    "2 years at Tata Motors, assembly line maintenance\n"
-                    "Basic knowledge of pneumatic systems\n"
-                    "No SAP experience\n"
-                    "Shift work experience: yes\n"
-                    "Strong documentation and reporting skills\n"
-                    "Currently pursuing ISO certification"
-                )
-            },
-            {
-                "name": "Suresh Kumar",
-                "cv": (
-                    "Diploma in Mechanical Engineering, 2015\n"
-                    "8 years at SAIL Bokaro, blast furnace maintenance\n"
-                    "Expert in hydraulic systems\n"
-                    "No formal SAP training but Excel-based maintenance logs\n"
-                    "No ISO certification\n"
-                    "Works day shifts only\n"
-                    "Managed 4-person team"
-                )
-            },
-            {
-                "name": "Meera Joshi",
-                "cv": (
-                    "B.Tech Mechanical, VNIT Nagpur, 2019\n"
-                    "4 years at ArcelorMittal Hazira, hot strip mill maintenance\n"
-                    "Hydraulic and pneumatic systems — daily work\n"
-                    "SAP PM module trained (2022)\n"
-                    "ISO 45001 in progress\n"
-                    "Rotating shifts — comfortable\n"
-                    "Co-authored plant's preventive maintenance SOPs"
-                )
-            },
-        ]
-        st.session_state["demo_candidates"] = demo_candidates
-
-    # ── Candidate CV inputs ────────────────────────────────────
+    # ── Number of candidates ───────────────────────────────────
     st.markdown("#### Step 2 — Add candidate CVs")
 
-    # Number of candidates slider
-    num_candidates = st.slider("How many candidates?", min_value=1, max_value=5, value=2)
+    num_candidates = st.slider(
+        "How many candidates?",
+        min_value=1,
+        max_value=5,
+        value=st.session_state.num_candidates,
+        key="num_slider"
+    )
+    st.session_state.num_candidates = num_candidates
 
+    # ── CV input boxes ─────────────────────────────────────────
     candidates = []
-    demo_data = st.session_state.get("demo_candidates", [])
 
     for i in range(num_candidates):
         st.markdown(f"**Candidate {i + 1}**")
         c1, c2 = st.columns([1, 3])
 
-        default_name = demo_data[i]["name"] if i < len(demo_data) else ""
-        default_cv   = demo_data[i]["cv"]   if i < len(demo_data) else ""
+        default_name = DEMO_CANDIDATES[i]["name"] if (st.session_state.demo_loaded and i < len(DEMO_CANDIDATES)) else ""
+        default_cv   = DEMO_CANDIDATES[i]["cv"]   if (st.session_state.demo_loaded and i < len(DEMO_CANDIDATES)) else ""
 
         with c1:
             name = st.text_input(
@@ -128,10 +139,10 @@ def show_cv_evaluator(api_key: str):
                 placeholder="Paste candidate's CV or resume text here..."
             )
 
-        if name and cv_text:
-            candidates.append({"name": name, "cv": cv_text})
+        if name.strip() and cv_text.strip():
+            candidates.append({"name": name.strip(), "cv": cv_text.strip()})
 
-    # ── Run evaluation ─────────────────────────────────────────
+    # ── Evaluate button ────────────────────────────────────────
     st.markdown("#### Step 3 — Evaluate")
     run_btn = st.button("🤖 Evaluate and Shortlist", type="primary", use_container_width=True)
 
@@ -140,17 +151,17 @@ def show_cv_evaluator(api_key: str):
             st.error("Please enter the job requirements first.")
             return
         if len(candidates) == 0:
-            st.error("Please add at least one candidate CV.")
-            return
-        if "paste-your-key-here" in api_key:
-            st.error("Please add your Anthropic API key in app.py first.")
+            st.error("Please add at least one candidate name and CV.")
             return
 
-        with st.spinner(f"AI is evaluating {len(candidates)} candidate(s)..."):
+        with st.spinner(f"AI is evaluating {len(candidates)} candidate(s)... please wait"):
             results = evaluate_cvs(api_key, jd, candidates)
+            st.session_state.results = results
 
-        if results:
-            display_results(results)
+    # ── Show results if available ──────────────────────────────
+    if st.session_state.results:
+        display_results(st.session_state.results)
+
 
 # ── AI evaluation function ─────────────────────────────────────
 def evaluate_cvs(api_key: str, jd: str, candidates: list) -> list:
@@ -189,13 +200,13 @@ Sort by score descending. Be honest — scores must meaningfully differentiate c
             messages=[{"role": "user", "content": prompt}]
         )
         raw = message.content[0].text
-        # Clean in case model adds backticks
         clean = raw.replace("```json", "").replace("```", "").strip()
         results = json.loads(clean)
         return sorted(results, key=lambda x: x.get("score", 0), reverse=True)
     except Exception as e:
         st.error(f"API error: {e}")
         return []
+
 
 # ── Results display ────────────────────────────────────────────
 def display_results(results: list):
@@ -213,24 +224,22 @@ def display_results(results: list):
 
     st.markdown("---")
 
+    rank_icons = ["🥇", "🥈", "🥉"]
+
     for i, r in enumerate(results):
-        score   = r.get("score", 0)
-        name    = r.get("name", f"Candidate {i+1}")
-        verdict = r.get("verdict", "")
-        summary = r.get("summary", "")
-        matched = r.get("matched", [])
-        missing = r.get("missing", [])
+        score        = r.get("score", 0)
+        name         = r.get("name", f"Candidate {i+1}")
+        verdict      = r.get("verdict", "")
+        summary      = r.get("summary", "")
+        matched      = r.get("matched", [])
+        missing      = r.get("missing", [])
         partial_reqs = r.get("partial", [])
 
-        # Color by score
         if score >= 70:
-            bar_color = "normal"
-            rank_icon = "🥇" if i == 0 else "🥈" if i == 1 else "🥉" if i == 2 else "✅"
+            rank_icon = rank_icons[i] if i < 3 else "✅"
         elif score >= 40:
-            bar_color = "off"
             rank_icon = "⚠️"
         else:
-            bar_color = "inverse"
             rank_icon = "❌"
 
         with st.container(border=True):
@@ -243,14 +252,12 @@ def display_results(results: list):
                 st.markdown(f"**#{i+1} — {name}**")
                 st.caption(summary)
 
-                # Score bar
                 sc1, sc2 = st.columns([4, 1])
                 with sc1:
                     st.progress(score / 100)
                 with sc2:
                     st.markdown(f"**{score}%** — {verdict}")
 
-                # Requirements breakdown
                 if matched:
                     st.markdown("✅ **Meets:** " + " · ".join(matched))
                 if partial_reqs:
