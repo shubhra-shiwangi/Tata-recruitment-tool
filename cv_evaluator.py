@@ -1,6 +1,19 @@
 import streamlit as st
 import anthropic
 import json
+import io
+
+# ── Libraries for reading different file formats ───────────────
+try:
+    import pdfplumber
+except ImportError:
+    pdfplumber = None
+
+try:
+    from docx import Document
+except ImportError:
+    Document = None
+
 
 DEMO_JD = """Job: Maintenance Engineer — Cold Rolling Mill, Tata Steel Jamshedpur
 
@@ -14,175 +27,179 @@ Requirements:
 - Ability to work rotating shifts
 - Team coordination and reporting skills"""
 
-DEMO_CANDIDATES = [
-    {
-        "name": "Ankit Verma",
-        "cv": """B.Tech Mechanical Engineering, NIT Jamshedpur, 2018
-5 years at Jindal Steel, Cold Rolling department
-Extensive hydraulic and pneumatic systems maintenance
-SAP PM module — daily user for 3 years
-ISO 45001 certified (2021)
-Led a team of 6 maintenance technicians
-Comfortable with rotating shifts
-Implemented preventive maintenance schedule reducing downtime by 18%"""
-    },
-    {
-        "name": "Priya Nair",
-        "cv": """B.E. Electrical Engineering, BITS Pilani, 2020
-2 years at Tata Motors, assembly line maintenance
-Basic knowledge of pneumatic systems
-No SAP experience
-Shift work experience: yes
-Strong documentation and reporting skills
-Currently pursuing ISO certification"""
-    },
-    {
-        "name": "Suresh Kumar",
-        "cv": """Diploma in Mechanical Engineering, 2015
-8 years at SAIL Bokaro, blast furnace maintenance
-Expert in hydraulic systems
-No formal SAP training but Excel-based maintenance logs
-No ISO certification
-Works day shifts only
-Managed 4-person team"""
-    },
-    {
-        "name": "Meera Joshi",
-        "cv": """B.Tech Mechanical, VNIT Nagpur, 2019
-4 years at ArcelorMittal Hazira, hot strip mill maintenance
-Hydraulic and pneumatic systems — daily work
-SAP PM module trained (2022)
-ISO 45001 in progress
-Rotating shifts — comfortable
-Co-authored plant's preventive maintenance SOPs"""
-    },
-]
+
+def extract_text_from_file(uploaded_file) -> str:
+    """Extract plain text from PDF, DOCX, or TXT file."""
+    name = uploaded_file.name.lower()
+    raw  = uploaded_file.read()
+
+    # ── PDF ────────────────────────────────────────────────────
+    if name.endswith(".pdf"):
+        if pdfplumber is None:
+            return "ERROR: pdfplumber not installed. Run: pip install pdfplumber"
+        try:
+            text = ""
+            with pdfplumber.open(io.BytesIO(raw)) as pdf:
+                for page in pdf.pages:
+                    page_text = page.extract_text()
+                    if page_text:
+                        text += page_text + "\n"
+            return text.strip() if text.strip() else "Could not extract text from this PDF."
+        except Exception as e:
+            return f"PDF read error: {e}"
+
+    # ── DOCX ───────────────────────────────────────────────────
+    elif name.endswith(".docx"):
+        if Document is None:
+            return "ERROR: python-docx not installed. Run: pip install python-docx"
+        try:
+            doc  = Document(io.BytesIO(raw))
+            text = "\n".join([para.text for para in doc.paragraphs if para.text.strip()])
+            return text.strip() if text.strip() else "Could not extract text from this DOCX."
+        except Exception as e:
+            return f"DOCX read error: {e}"
+
+    # ── TXT / plain text ───────────────────────────────────────
+    elif name.endswith(".txt"):
+        try:
+            return raw.decode("utf-8").strip()
+        except Exception:
+            return raw.decode("latin-1").strip()
+
+    else:
+        return f"Unsupported file type: {uploaded_file.name}. Please upload PDF, DOCX, or TXT."
 
 
 def show_cv_evaluator(api_key: str):
 
     st.subheader("AI-Powered CV Evaluator & Shortlist")
-    st.caption(
-        "Paste the job requirements and up to 5 candidate CVs. "
-        "The AI will score each CV against the requirements and rank the shortlist."
-    )
+    st.caption("Upload CV files for each candidate. The AI will score and rank them against your job requirements.")
 
-    # ── Initialise session state FULLY before anything renders ─
-    if "num_candidates" not in st.session_state:
-        st.session_state.num_candidates = 2
-    if "results" not in st.session_state:
-        st.session_state.results = None
-    if "jd" not in st.session_state:
-        st.session_state.jd = ""
-    if "candidate_names" not in st.session_state:
-        st.session_state.candidate_names = [""] * st.session_state.num_candidates
-    if "candidate_cvs" not in st.session_state:
-        st.session_state.candidate_cvs = [""] * st.session_state.num_candidates
+    # ── Install check ──────────────────────────────────────────
+    missing_libs = []
+    if pdfplumber is None:
+        missing_libs.append("pdfplumber")
+    if Document is None:
+        missing_libs.append("python-docx")
+    if missing_libs:
+        st.warning(
+            f"Some libraries are missing: `{', '.join(missing_libs)}`. "
+            "PDF/DOCX upload may not work. "
+            f"Fix: open Anaconda Prompt and run `pip install {' '.join(missing_libs)}`"
+        )
 
-    # ── Demo button ────────────────────────────────────────────
-    if st.button("📂 Load demo data (Maintenance Engineer role)"):
-        # Write ALL demo data into session state at once
-        st.session_state.jd = DEMO_JD
-        st.session_state.num_candidates = 4
-        st.session_state.candidate_names = [c["name"] for c in DEMO_CANDIDATES]
-        st.session_state.candidate_cvs   = [c["cv"]   for c in DEMO_CANDIDATES]
-        st.session_state.results = None
-        st.rerun()  # force full page reload with new state
+    st.markdown("---")
 
-    # ── Job description ────────────────────────────────────────
+    # ── Step 1: Job requirements ───────────────────────────────
     st.markdown("#### Step 1 — Enter job requirements")
+
+    if st.button("📂 Load demo job description"):
+        st.session_state["jd_text"] = DEMO_JD
+        st.rerun()
+
     jd = st.text_area(
-        "Job description / requirements",
-        value=st.session_state.jd,
+        "Paste the job description or list requirements here",
+        value=st.session_state.get("jd_text", ""),
         height=180,
         placeholder=(
             "Example:\n"
             "- B.Tech Mechanical or Electrical Engineering\n"
             "- 3+ years in steel plant or heavy manufacturing\n"
             "- SAP PM module experience preferred\n"
-            "- ISO 45001 safety certification"
+            "- ISO 45001 safety certification\n"
+            "- Rotating shift flexibility"
         ),
-        key="jd_box"
+        key="jd_area"
     )
-    st.session_state.jd = jd
 
-    # ── Slider ─────────────────────────────────────────────────
-    st.markdown("#### Step 2 — Add candidate CVs")
-    num = st.slider(
-        "How many candidates?",
+    st.markdown("---")
+
+    # ── Step 2: Number of candidates ──────────────────────────
+    st.markdown("#### Step 2 — How many candidates?")
+
+    num = st.number_input(
+        "Enter number of candidates",
         min_value=1,
-        max_value=5,
-        value=st.session_state.num_candidates,
-        key="num_slider"
+        max_value=10,
+        value=st.session_state.get("num_candidates", 2),
+        step=1
     )
+    st.session_state["num_candidates"] = int(num)
 
-    # If slider moved, update num and resize lists BEFORE rendering boxes
-    if num != st.session_state.num_candidates:
-        st.session_state.num_candidates = num
+    st.markdown("---")
 
-    # Always ensure lists are exactly the right length
-    while len(st.session_state.candidate_names) < num:
-        st.session_state.candidate_names.append("")
-    while len(st.session_state.candidate_cvs) < num:
-        st.session_state.candidate_cvs.append("")
-    st.session_state.candidate_names = st.session_state.candidate_names[:num]
-    st.session_state.candidate_cvs   = st.session_state.candidate_cvs[:num]
+    # ── Step 3: Upload CVs ─────────────────────────────────────
+    st.markdown("#### Step 3 — Upload candidate CVs")
+    st.caption("Supported formats: PDF, DOCX, TXT")
 
-    # ── CV boxes — read directly from session state lists ──────
     candidates = []
 
-    for i in range(num):
+    for i in range(int(num)):
         st.markdown(f"**Candidate {i + 1}**")
-        c1, c2 = st.columns([1, 3])
+        col1, col2 = st.columns([1, 2])
 
-        with c1:
+        with col1:
             name = st.text_input(
-                "Name",
-                value=st.session_state.candidate_names[i],
-                key=f"name_input_{i}",
-                placeholder="e.g. Rahul Sharma"
+                "Candidate name",
+                key=f"cand_name_{i}",
+                placeholder=f"e.g. Candidate {i+1} name"
             )
-            st.session_state.candidate_names[i] = name
 
-        with c2:
-            cv_text = st.text_area(
-                "Paste CV text",
-                value=st.session_state.candidate_cvs[i],
-                key=f"cv_input_{i}",
-                height=130,
-                placeholder="Paste candidate's CV or resume text here..."
+        with col2:
+            uploaded_file = st.file_uploader(
+                "Upload CV (PDF / DOCX / TXT)",
+                type=["pdf", "docx", "txt"],
+                key=f"cand_file_{i}",
+                label_visibility="visible"
             )
-            st.session_state.candidate_cvs[i] = cv_text
 
-        if name.strip() and cv_text.strip():
-            candidates.append({"name": name.strip(), "cv": cv_text.strip()})
+        if name.strip() and uploaded_file is not None:
+            with st.spinner(f"Reading {uploaded_file.name}..."):
+                cv_text = extract_text_from_file(uploaded_file)
 
-    # ── Evaluate button ────────────────────────────────────────
-    st.markdown("#### Step 3 — Evaluate")
-    run_btn = st.button(
-        "🤖 Evaluate and Shortlist",
-        type="primary",
-        use_container_width=True
-    )
+            if cv_text.startswith("ERROR") or cv_text.startswith("Unsupported"):
+                st.error(cv_text)
+            else:
+                st.success(f"✅ CV read successfully ({len(cv_text)} characters extracted)")
+                with st.expander(f"Preview extracted text — {name}"):
+                    st.text(cv_text[:800] + ("..." if len(cv_text) > 800 else ""))
+                candidates.append({"name": name.strip(), "cv": cv_text})
 
-    if run_btn:
-        if not st.session_state.jd.strip():
-            st.error("Please enter the job requirements first.")
+        elif name.strip() and uploaded_file is None:
+            st.info(f"Waiting for CV file for {name}...")
+
+    st.markdown("---")
+
+    # ── Step 4: Evaluate ───────────────────────────────────────
+    st.markdown("#### Step 4 — Evaluate and shortlist")
+
+    if st.button("🤖 Evaluate and Shortlist", type="primary", use_container_width=True):
+
+        if not jd.strip():
+            st.error("Please enter job requirements in Step 1.")
             return
+
         if len(candidates) == 0:
-            st.error("Please add at least one candidate name and CV.")
+            st.error("Please enter at least one candidate name and upload their CV.")
             return
+
+        if len(candidates) < int(num):
+            st.warning(
+                f"Only {len(candidates)} of {int(num)} candidates have both a name and CV uploaded. "
+                "Evaluating the ones that are ready."
+            )
 
         with st.spinner(f"AI is evaluating {len(candidates)} candidate(s)... please wait"):
-            results = evaluate_cvs(api_key, st.session_state.jd, candidates)
-            st.session_state.results = results
+            results = evaluate_cvs(api_key, jd, candidates)
+            st.session_state["last_results"] = results
 
     # ── Show results ───────────────────────────────────────────
-    if st.session_state.results:
-        display_results(st.session_state.results)
+    if st.session_state.get("last_results"):
+        display_results(st.session_state["last_results"])
 
 
 def evaluate_cvs(api_key: str, jd: str, candidates: list) -> list:
+    """Send CVs to Claude API and get back scored results."""
     client = anthropic.Anthropic(api_key=api_key)
 
     candidates_text = "\n\n".join([
@@ -190,7 +207,7 @@ def evaluate_cvs(api_key: str, jd: str, candidates: list) -> list:
         for i, c in enumerate(candidates)
     ])
 
-    prompt = f"""You are an expert HR recruiter at Tata Steel. Evaluate each candidate CV against the job requirements below.
+    prompt = f"""You are an expert HR recruiter at Tata Steel. Evaluate each candidate's CV against the job requirements below.
 
 JOB REQUIREMENTS:
 {jd}
@@ -198,46 +215,52 @@ JOB REQUIREMENTS:
 CANDIDATES:
 {candidates_text}
 
-Return ONLY a valid JSON array — no explanation, no markdown, no backticks.
+Return ONLY a valid JSON array. No explanation, no markdown, no backticks whatsoever.
 
-Each object in the array must have:
-- "name": candidate name (string)
-- "score": overall match percentage as integer 0-100
-- "verdict": one of "Strong match", "Partial match", "Weak match"
-- "matched": list of up to 5 requirements clearly met (short phrases)
-- "missing": list of up to 4 key requirements NOT met (short phrases)
-- "partial": list of up to 3 partially met requirements (short phrases)
-- "summary": one sentence (max 20 words) on why they rank where they do
+Each object in the array must have exactly these fields:
+- "name": candidate name as string
+- "score": integer from 0 to 100 representing % match
+- "verdict": exactly one of "Strong match", "Partial match", or "Weak match"
+- "matched": list of up to 5 short phrases for requirements clearly met
+- "missing": list of up to 4 short phrases for key requirements NOT met
+- "partial": list of up to 3 short phrases for partially met requirements
+- "summary": one sentence, maximum 20 words, explaining their ranking
 
-Sort by score descending. Be honest — scores must meaningfully differentiate candidates."""
+Sort results by score from highest to lowest.
+Be specific and honest — scores should meaningfully differentiate candidates."""
 
     try:
         message = client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=1500,
+            max_tokens=2000,
             messages=[{"role": "user", "content": prompt}]
         )
-        raw = message.content[0].text
+        raw   = message.content[0].text
         clean = raw.replace("```json", "").replace("```", "").strip()
-        results = json.loads(clean)
-        return sorted(results, key=lambda x: x.get("score", 0), reverse=True)
+        data  = json.loads(clean)
+        return sorted(data, key=lambda x: x.get("score", 0), reverse=True)
+
+    except json.JSONDecodeError as e:
+        st.error(f"Could not parse AI response as JSON: {e}")
+        return []
     except Exception as e:
         st.error(f"API error: {e}")
         return []
 
 
 def display_results(results: list):
+    """Display ranked shortlist with scores and breakdowns."""
     st.divider()
-    st.subheader("Shortlist — Ranked by Match Score")
+    st.subheader("📋 Shortlist — Ranked by Match Score")
 
     strong  = sum(1 for r in results if r.get("score", 0) >= 70)
     partial = sum(1 for r in results if 40 <= r.get("score", 0) < 70)
     weak    = sum(1 for r in results if r.get("score", 0) < 40)
 
     m1, m2, m3 = st.columns(3)
-    m1.metric("Strong matches (≥70%)", strong)
-    m2.metric("Partial matches (40–69%)", partial)
-    m3.metric("Weak matches (<40%)", weak)
+    m1.metric("🟢 Strong matches (≥70%)", strong)
+    m2.metric("🟡 Partial matches (40–69%)", partial)
+    m3.metric("🔴 Weak matches (<40%)", weak)
 
     st.markdown("---")
 
@@ -253,27 +276,28 @@ def display_results(results: list):
         partial_reqs = r.get("partial", [])
 
         if score >= 70:
-            rank_icon = rank_icons[i] if i < 3 else "✅"
+            icon = rank_icons[i] if i < 3 else "✅"
         elif score >= 40:
-            rank_icon = "⚠️"
+            icon = "⚠️"
         else:
-            rank_icon = "❌"
+            icon = "❌"
 
         with st.container(border=True):
-            col_rank, col_info = st.columns([0.08, 0.92])
+            left, right = st.columns([0.08, 0.92])
 
-            with col_rank:
-                st.markdown(f"### {rank_icon}")
+            with left:
+                st.markdown(f"### {icon}")
 
-            with col_info:
+            with right:
                 st.markdown(f"**#{i+1} — {name}**")
                 st.caption(summary)
 
-                sc1, sc2 = st.columns([4, 1])
-                with sc1:
+                bar_col, score_col = st.columns([4, 1])
+                with bar_col:
                     st.progress(score / 100)
-                with sc2:
-                    st.markdown(f"**{score}%** — {verdict}")
+                with score_col:
+                    st.markdown(f"**{score}%**")
+                    st.caption(verdict)
 
                 if matched:
                     st.markdown("✅ **Meets:** " + " · ".join(matched))
@@ -281,3 +305,22 @@ def display_results(results: list):
                     st.markdown("🔶 **Partial:** " + " · ".join(partial_reqs))
                 if missing:
                     st.markdown("❌ **Missing:** " + " · ".join(missing))
+
+    # ── Export shortlist ───────────────────────────────────────
+    st.markdown("---")
+    export_lines = ["TATA STEEL — CV EVALUATION SHORTLIST\n"]
+    for i, r in enumerate(results):
+        export_lines.append(
+            f"#{i+1} {r.get('name','')} — {r.get('score',0)}% — {r.get('verdict','')}\n"
+            f"Summary: {r.get('summary','')}\n"
+            f"Meets: {', '.join(r.get('matched',[]))}\n"
+            f"Missing: {', '.join(r.get('missing',[]))}\n"
+        )
+    export_text = "\n".join(export_lines)
+
+    st.download_button(
+        label="⬇️ Download shortlist as TXT",
+        data=export_text,
+        file_name="tata_steel_shortlist.txt",
+        mime="text/plain"
+    )
