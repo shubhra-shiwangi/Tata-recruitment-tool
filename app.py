@@ -6,7 +6,8 @@ st.set_page_config(
     layout="wide"
 )
 
-ANTHROPIC_API_KEY = st.secrets["ANTHROPIC_API_KEY"]
+# ── Gemini API key ─────────────────────────────────────────────
+GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 
 st.markdown("## 🏭 Tata Steel — Recruitment & CV Evaluation Tool")
 st.markdown("*AI-powered hiring analytics for HR internship project*")
@@ -20,4 +21,4 @@ with tab1:
 
 with tab2:
     from cv_evaluator import show_cv_evaluator
-    show_cv_evaluator(ANTHROPIC_API_KEY)
+    show_cv_evaluator(GEMINI_API_KEY)
