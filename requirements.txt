@@ -2,3 +2,5 @@ streamlit
 anthropic
 plotly
 pandas
+pdfplumber
+python-docx
