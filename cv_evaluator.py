@@ -59,31 +59,6 @@ Co-authored plant's preventive maintenance SOPs"""
 ]
 
 
-def init_state():
-    """Initialise all session state keys safely."""
-    defaults = {
-        "demo_loaded": False,
-        "num_candidates": 2,
-        "results": None,
-        "jd": "",
-        "candidate_names": ["", ""],
-        "candidate_cvs": ["", ""],
-    }
-    for key, val in defaults.items():
-        if key not in st.session_state:
-            st.session_state[key] = val
-
-
-def load_demo():
-    """Write demo data straight into session state."""
-    st.session_state.demo_loaded = True
-    st.session_state.num_candidates = 4
-    st.session_state.jd = DEMO_JD
-    st.session_state.results = None
-    st.session_state.candidate_names = [c["name"] for c in DEMO_CANDIDATES]
-    st.session_state.candidate_cvs  = [c["cv"]   for c in DEMO_CANDIDATES]
-
-
 def show_cv_evaluator(api_key: str):
 
     st.subheader("AI-Powered CV Evaluator & Shortlist")
@@ -92,16 +67,31 @@ def show_cv_evaluator(api_key: str):
         "The AI will score each CV against the requirements and rank the shortlist."
     )
 
-    init_state()
+    # ── Initialise session state FULLY before anything renders ─
+    if "num_candidates" not in st.session_state:
+        st.session_state.num_candidates = 2
+    if "results" not in st.session_state:
+        st.session_state.results = None
+    if "jd" not in st.session_state:
+        st.session_state.jd = ""
+    if "candidate_names" not in st.session_state:
+        st.session_state.candidate_names = [""] * st.session_state.num_candidates
+    if "candidate_cvs" not in st.session_state:
+        st.session_state.candidate_cvs = [""] * st.session_state.num_candidates
 
     # ── Demo button ────────────────────────────────────────────
     if st.button("📂 Load demo data (Maintenance Engineer role)"):
-        load_demo()
-        st.rerun()
+        # Write ALL demo data into session state at once
+        st.session_state.jd = DEMO_JD
+        st.session_state.num_candidates = 4
+        st.session_state.candidate_names = [c["name"] for c in DEMO_CANDIDATES]
+        st.session_state.candidate_cvs   = [c["cv"]   for c in DEMO_CANDIDATES]
+        st.session_state.results = None
+        st.rerun()  # force full page reload with new state
 
     # ── Job description ────────────────────────────────────────
     st.markdown("#### Step 1 — Enter job requirements")
-    st.session_state.jd = st.text_area(
+    jd = st.text_area(
         "Job description / requirements",
         value=st.session_state.jd,
         height=180,
@@ -111,34 +101,37 @@ def show_cv_evaluator(api_key: str):
             "- 3+ years in steel plant or heavy manufacturing\n"
             "- SAP PM module experience preferred\n"
             "- ISO 45001 safety certification"
-        )
+        ),
+        key="jd_box"
     )
+    st.session_state.jd = jd
 
-    # ── Number of candidates ───────────────────────────────────
+    # ── Slider ─────────────────────────────────────────────────
     st.markdown("#### Step 2 — Add candidate CVs")
-
-    new_num = st.slider(
+    num = st.slider(
         "How many candidates?",
         min_value=1,
         max_value=5,
-        value=st.session_state.num_candidates
+        value=st.session_state.num_candidates,
+        key="num_slider"
     )
 
-    # Resize lists if slider changed
-    if new_num != st.session_state.num_candidates:
-        st.session_state.num_candidates = new_num
-        # Pad or trim the lists
-        while len(st.session_state.candidate_names) < new_num:
-            st.session_state.candidate_names.append("")
-        while len(st.session_state.candidate_cvs) < new_num:
-            st.session_state.candidate_cvs.append("")
-        st.session_state.candidate_names = st.session_state.candidate_names[:new_num]
-        st.session_state.candidate_cvs   = st.session_state.candidate_cvs[:new_num]
+    # If slider moved, update num and resize lists BEFORE rendering boxes
+    if num != st.session_state.num_candidates:
+        st.session_state.num_candidates = num
 
-    # ── CV input boxes ─────────────────────────────────────────
+    # Always ensure lists are exactly the right length
+    while len(st.session_state.candidate_names) < num:
+        st.session_state.candidate_names.append("")
+    while len(st.session_state.candidate_cvs) < num:
+        st.session_state.candidate_cvs.append("")
+    st.session_state.candidate_names = st.session_state.candidate_names[:num]
+    st.session_state.candidate_cvs   = st.session_state.candidate_cvs[:num]
+
+    # ── CV boxes — read directly from session state lists ──────
     candidates = []
 
-    for i in range(st.session_state.num_candidates):
+    for i in range(num):
         st.markdown(f"**Candidate {i + 1}**")
         c1, c2 = st.columns([1, 3])
 
