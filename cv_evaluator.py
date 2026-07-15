@@ -1,9 +1,12 @@
 import streamlit as st
-import anthropic
 import json
 import io
 
-# ── Libraries for reading different file formats ───────────────
+try:
+    import google.generativeai as genai
+except ImportError:
+    genai = None
+
 try:
     import pdfplumber
 except ImportError:
@@ -29,14 +32,12 @@ Requirements:
 
 
 def extract_text_from_file(uploaded_file) -> str:
-    """Extract plain text from PDF, DOCX, or TXT file."""
     name = uploaded_file.name.lower()
     raw  = uploaded_file.read()
 
-    # ── PDF ────────────────────────────────────────────────────
     if name.endswith(".pdf"):
         if pdfplumber is None:
-            return "ERROR: pdfplumber not installed. Run: pip install pdfplumber"
+            return "ERROR: pdfplumber not installed."
         try:
             text = ""
             with pdfplumber.open(io.BytesIO(raw)) as pdf:
@@ -48,18 +49,16 @@ def extract_text_from_file(uploaded_file) -> str:
         except Exception as e:
             return f"PDF read error: {e}"
 
-    # ── DOCX ───────────────────────────────────────────────────
     elif name.endswith(".docx"):
         if Document is None:
-            return "ERROR: python-docx not installed. Run: pip install python-docx"
+            return "ERROR: python-docx not installed."
         try:
             doc  = Document(io.BytesIO(raw))
-            text = "\n".join([para.text for para in doc.paragraphs if para.text.strip()])
+            text = "\n".join([p.text for p in doc.paragraphs if p.text.strip()])
             return text.strip() if text.strip() else "Could not extract text from this DOCX."
         except Exception as e:
             return f"DOCX read error: {e}"
 
-    # ── TXT / plain text ───────────────────────────────────────
     elif name.endswith(".txt"):
         try:
             return raw.decode("utf-8").strip()
@@ -67,26 +66,17 @@ def extract_text_from_file(uploaded_file) -> str:
             return raw.decode("latin-1").strip()
 
     else:
-        return f"Unsupported file type: {uploaded_file.name}. Please upload PDF, DOCX, or TXT."
+        return f"Unsupported file type. Please upload PDF, DOCX, or TXT."
 
 
 def show_cv_evaluator(api_key: str):
 
     st.subheader("AI-Powered CV Evaluator & Shortlist")
-    st.caption("Upload CV files for each candidate. The AI will score and rank them against your job requirements.")
+    st.caption("Upload CV files for each candidate. The AI will score and rank them.")
 
-    # ── Install check ──────────────────────────────────────────
-    missing_libs = []
-    if pdfplumber is None:
-        missing_libs.append("pdfplumber")
-    if Document is None:
-        missing_libs.append("python-docx")
-    if missing_libs:
-        st.warning(
-            f"Some libraries are missing: `{', '.join(missing_libs)}`. "
-            "PDF/DOCX upload may not work. "
-            f"Fix: open Anaconda Prompt and run `pip install {' '.join(missing_libs)}`"
-        )
+    if genai is None:
+        st.error("google-generativeai not installed. Run: pip install google-generativeai")
+        return
 
     st.markdown("---")
 
@@ -104,10 +94,9 @@ def show_cv_evaluator(api_key: str):
         placeholder=(
             "Example:\n"
             "- B.Tech Mechanical or Electrical Engineering\n"
-            "- 3+ years in steel plant or heavy manufacturing\n"
-            "- SAP PM module experience preferred\n"
-            "- ISO 45001 safety certification\n"
-            "- Rotating shift flexibility"
+            "- 3+ years in steel plant\n"
+            "- SAP PM module experience\n"
+            "- ISO 45001 certification"
         ),
         key="jd_area"
     )
@@ -142,15 +131,14 @@ def show_cv_evaluator(api_key: str):
             name = st.text_input(
                 "Candidate name",
                 key=f"cand_name_{i}",
-                placeholder=f"e.g. Candidate {i+1} name"
+                placeholder=f"e.g. Rahul Sharma"
             )
 
         with col2:
             uploaded_file = st.file_uploader(
                 "Upload CV (PDF / DOCX / TXT)",
                 type=["pdf", "docx", "txt"],
-                key=f"cand_file_{i}",
-                label_visibility="visible"
+                key=f"cand_file_{i}"
             )
 
         if name.strip() and uploaded_file is not None:
@@ -160,8 +148,8 @@ def show_cv_evaluator(api_key: str):
             if cv_text.startswith("ERROR") or cv_text.startswith("Unsupported"):
                 st.error(cv_text)
             else:
-                st.success(f"✅ CV read successfully ({len(cv_text)} characters extracted)")
-                with st.expander(f"Preview extracted text — {name}"):
+                st.success(f"✅ Read successfully — {len(cv_text)} characters extracted")
+                with st.expander(f"Preview — {name}"):
                     st.text(cv_text[:800] + ("..." if len(cv_text) > 800 else ""))
                 candidates.append({"name": name.strip(), "cv": cv_text})
 
@@ -180,34 +168,28 @@ def show_cv_evaluator(api_key: str):
             return
 
         if len(candidates) == 0:
-            st.error("Please enter at least one candidate name and upload their CV.")
+            st.error("Please enter candidate names and upload their CVs.")
             return
-
-        if len(candidates) < int(num):
-            st.warning(
-                f"Only {len(candidates)} of {int(num)} candidates have both a name and CV uploaded. "
-                "Evaluating the ones that are ready."
-            )
 
         with st.spinner(f"AI is evaluating {len(candidates)} candidate(s)... please wait"):
             results = evaluate_cvs(api_key, jd, candidates)
             st.session_state["last_results"] = results
 
-    # ── Show results ───────────────────────────────────────────
     if st.session_state.get("last_results"):
         display_results(st.session_state["last_results"])
 
 
 def evaluate_cvs(api_key: str, jd: str, candidates: list) -> list:
-    """Send CVs to Claude API and get back scored results."""
-    client = anthropic.Anthropic(api_key=api_key)
+
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel("gemini-2.0-flash")
 
     candidates_text = "\n\n".join([
         f"--- Candidate {i+1}: {c['name']} ---\n{c['cv']}"
         for i, c in enumerate(candidates)
     ])
 
-    prompt = f"""You are an expert HR recruiter at Tata Steel. Evaluate each candidate's CV against the job requirements below.
+    prompt = f"""You are an expert HR recruiter at Tata Steel. Evaluate each candidate CV against the job requirements below.
 
 JOB REQUIREMENTS:
 {jd}
@@ -217,53 +199,42 @@ CANDIDATES:
 
 Return ONLY a valid JSON array. No explanation, no markdown, no backticks whatsoever.
 
-Each object in the array must have exactly these fields:
+Each object must have:
 - "name": candidate name as string
-- "score": integer from 0 to 100 representing % match
+- "score": integer 0-100 representing % match
 - "verdict": exactly one of "Strong match", "Partial match", or "Weak match"
 - "matched": list of up to 5 short phrases for requirements clearly met
 - "missing": list of up to 4 short phrases for key requirements NOT met
 - "partial": list of up to 3 short phrases for partially met requirements
-- "summary": one sentence, maximum 20 words, explaining their ranking
+- "summary": one sentence max 20 words explaining their ranking
 
-Sort results by score from highest to lowest.
-Be specific and honest — scores should meaningfully differentiate candidates."""
+Sort by score descending. Be honest and specific."""
 
     try:
-        message = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=2000,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        raw   = message.content[0].text
-        clean = raw.replace("```json", "").replace("```", "").strip()
-        data  = json.loads(clean)
+        response = model.generate_content(prompt)
+        raw      = response.text
+        clean    = raw.replace("```json", "").replace("```", "").strip()
+        data     = json.loads(clean)
         return sorted(data, key=lambda x: x.get("score", 0), reverse=True)
 
     except json.JSONDecodeError as e:
-        st.error(f"Could not parse AI response as JSON: {e}")
+        st.error(f"Could not parse AI response: {e}")
         return []
     except Exception as e:
-        st.error(f"API error: {e}")
+        st.error(f"Gemini API error: {e}")
         return []
 
 
 def display_results(results: list):
-    """Display ranked shortlist with scores and breakdowns."""
     st.divider()
     st.subheader("📋 Shortlist — Ranked by Match Score")
 
-    strong  = sum(1 for r in results if r.get("score", 0) >= 70)
-    partial = sum(1 for r in results if 40 <= r.get("score", 0) < 70)
-    weak    = sum(1 for r in results if r.get("score", 0) < 40)
-
     m1, m2, m3 = st.columns(3)
-    m1.metric("🟢 Strong matches (≥70%)", strong)
-    m2.metric("🟡 Partial matches (40–69%)", partial)
-    m3.metric("🔴 Weak matches (<40%)", weak)
+    m1.metric("🟢 Strong (≥70%)",    sum(1 for r in results if r.get("score",0) >= 70))
+    m2.metric("🟡 Partial (40–69%)", sum(1 for r in results if 40 <= r.get("score",0) < 70))
+    m3.metric("🔴 Weak (<40%)",      sum(1 for r in results if r.get("score",0) < 40))
 
     st.markdown("---")
-
     rank_icons = ["🥇", "🥈", "🥉"]
 
     for i, r in enumerate(results):
@@ -283,22 +254,18 @@ def display_results(results: list):
             icon = "❌"
 
         with st.container(border=True):
-            left, right = st.columns([0.08, 0.92])
-
-            with left:
+            c1, c2 = st.columns([0.08, 0.92])
+            with c1:
                 st.markdown(f"### {icon}")
-
-            with right:
+            with c2:
                 st.markdown(f"**#{i+1} — {name}**")
                 st.caption(summary)
-
-                bar_col, score_col = st.columns([4, 1])
-                with bar_col:
+                p1, p2 = st.columns([4, 1])
+                with p1:
                     st.progress(score / 100)
-                with score_col:
+                with p2:
                     st.markdown(f"**{score}%**")
                     st.caption(verdict)
-
                 if matched:
                     st.markdown("✅ **Meets:** " + " · ".join(matched))
                 if partial_reqs:
@@ -306,21 +273,19 @@ def display_results(results: list):
                 if missing:
                     st.markdown("❌ **Missing:** " + " · ".join(missing))
 
-    # ── Export shortlist ───────────────────────────────────────
+    # ── Download shortlist ─────────────────────────────────────
     st.markdown("---")
-    export_lines = ["TATA STEEL — CV EVALUATION SHORTLIST\n"]
+    lines = ["TATA STEEL — CV EVALUATION SHORTLIST\n"]
     for i, r in enumerate(results):
-        export_lines.append(
+        lines.append(
             f"#{i+1} {r.get('name','')} — {r.get('score',0)}% — {r.get('verdict','')}\n"
             f"Summary: {r.get('summary','')}\n"
             f"Meets: {', '.join(r.get('matched',[]))}\n"
             f"Missing: {', '.join(r.get('missing',[]))}\n"
         )
-    export_text = "\n".join(export_lines)
-
     st.download_button(
         label="⬇️ Download shortlist as TXT",
-        data=export_text,
+        data="\n".join(lines),
         file_name="tata_steel_shortlist.txt",
         mime="text/plain"
     )
