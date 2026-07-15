@@ -4,3 +4,4 @@ plotly
 pandas
 pdfplumber
 python-docx
+google-generativeai
