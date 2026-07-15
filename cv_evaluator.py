@@ -2,7 +2,6 @@ import streamlit as st
 import anthropic
 import json
 
-# ── Demo data defined at top level ────────────────────────────
 DEMO_JD = """Job: Maintenance Engineer — Cold Rolling Mill, Tata Steel Jamshedpur
 
 Requirements:
@@ -60,6 +59,31 @@ Co-authored plant's preventive maintenance SOPs"""
 ]
 
 
+def init_state():
+    """Initialise all session state keys safely."""
+    defaults = {
+        "demo_loaded": False,
+        "num_candidates": 2,
+        "results": None,
+        "jd": "",
+        "candidate_names": ["", ""],
+        "candidate_cvs": ["", ""],
+    }
+    for key, val in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = val
+
+
+def load_demo():
+    """Write demo data straight into session state."""
+    st.session_state.demo_loaded = True
+    st.session_state.num_candidates = 4
+    st.session_state.jd = DEMO_JD
+    st.session_state.results = None
+    st.session_state.candidate_names = [c["name"] for c in DEMO_CANDIDATES]
+    st.session_state.candidate_cvs  = [c["cv"]   for c in DEMO_CANDIDATES]
+
+
 def show_cv_evaluator(api_key: str):
 
     st.subheader("AI-Powered CV Evaluator & Shortlist")
@@ -68,86 +92,88 @@ def show_cv_evaluator(api_key: str):
         "The AI will score each CV against the requirements and rank the shortlist."
     )
 
-    # ── Initialise session state ───────────────────────────────
-    if "demo_loaded" not in st.session_state:
-        st.session_state.demo_loaded = False
-    if "num_candidates" not in st.session_state:
-        st.session_state.num_candidates = 2
-    if "results" not in st.session_state:
-        st.session_state.results = None
+    init_state()
 
-    # ── Demo loader button ─────────────────────────────────────
+    # ── Demo button ────────────────────────────────────────────
     if st.button("📂 Load demo data (Maintenance Engineer role)"):
-        st.session_state.demo_loaded = True
-        st.session_state.num_candidates = 4
-        st.session_state.results = None
+        load_demo()
+        st.rerun()
 
     # ── Job description ────────────────────────────────────────
     st.markdown("#### Step 1 — Enter job requirements")
-
-    jd = st.text_area(
+    st.session_state.jd = st.text_area(
         "Job description / requirements",
-        value=DEMO_JD if st.session_state.demo_loaded else "",
+        value=st.session_state.jd,
         height=180,
         placeholder=(
             "Example:\n"
             "- B.Tech Mechanical or Electrical Engineering\n"
             "- 3+ years in steel plant or heavy manufacturing\n"
-            "- Knowledge of hydraulic and pneumatic systems\n"
             "- SAP PM module experience preferred\n"
-            "- ISO 45001 safety certification\n"
-            "- Rotating shift flexibility"
-        ),
-        key="jd_input"
+            "- ISO 45001 safety certification"
+        )
     )
 
     # ── Number of candidates ───────────────────────────────────
     st.markdown("#### Step 2 — Add candidate CVs")
 
-    num_candidates = st.slider(
+    new_num = st.slider(
         "How many candidates?",
         min_value=1,
         max_value=5,
-        value=st.session_state.num_candidates,
-        key="num_slider"
+        value=st.session_state.num_candidates
     )
-    st.session_state.num_candidates = num_candidates
+
+    # Resize lists if slider changed
+    if new_num != st.session_state.num_candidates:
+        st.session_state.num_candidates = new_num
+        # Pad or trim the lists
+        while len(st.session_state.candidate_names) < new_num:
+            st.session_state.candidate_names.append("")
+        while len(st.session_state.candidate_cvs) < new_num:
+            st.session_state.candidate_cvs.append("")
+        st.session_state.candidate_names = st.session_state.candidate_names[:new_num]
+        st.session_state.candidate_cvs   = st.session_state.candidate_cvs[:new_num]
 
     # ── CV input boxes ─────────────────────────────────────────
     candidates = []
 
-    for i in range(num_candidates):
+    for i in range(st.session_state.num_candidates):
         st.markdown(f"**Candidate {i + 1}**")
         c1, c2 = st.columns([1, 3])
-
-        default_name = DEMO_CANDIDATES[i]["name"] if (st.session_state.demo_loaded and i < len(DEMO_CANDIDATES)) else ""
-        default_cv   = DEMO_CANDIDATES[i]["cv"]   if (st.session_state.demo_loaded and i < len(DEMO_CANDIDATES)) else ""
 
         with c1:
             name = st.text_input(
                 "Name",
-                value=default_name,
-                key=f"name_{i}",
+                value=st.session_state.candidate_names[i],
+                key=f"name_input_{i}",
                 placeholder="e.g. Rahul Sharma"
             )
+            st.session_state.candidate_names[i] = name
+
         with c2:
             cv_text = st.text_area(
                 "Paste CV text",
-                value=default_cv,
-                key=f"cv_{i}",
+                value=st.session_state.candidate_cvs[i],
+                key=f"cv_input_{i}",
                 height=130,
                 placeholder="Paste candidate's CV or resume text here..."
             )
+            st.session_state.candidate_cvs[i] = cv_text
 
         if name.strip() and cv_text.strip():
             candidates.append({"name": name.strip(), "cv": cv_text.strip()})
 
     # ── Evaluate button ────────────────────────────────────────
     st.markdown("#### Step 3 — Evaluate")
-    run_btn = st.button("🤖 Evaluate and Shortlist", type="primary", use_container_width=True)
+    run_btn = st.button(
+        "🤖 Evaluate and Shortlist",
+        type="primary",
+        use_container_width=True
+    )
 
     if run_btn:
-        if not jd.strip():
+        if not st.session_state.jd.strip():
             st.error("Please enter the job requirements first.")
             return
         if len(candidates) == 0:
@@ -155,15 +181,14 @@ def show_cv_evaluator(api_key: str):
             return
 
         with st.spinner(f"AI is evaluating {len(candidates)} candidate(s)... please wait"):
-            results = evaluate_cvs(api_key, jd, candidates)
+            results = evaluate_cvs(api_key, st.session_state.jd, candidates)
             st.session_state.results = results
 
-    # ── Show results if available ──────────────────────────────
+    # ── Show results ───────────────────────────────────────────
     if st.session_state.results:
         display_results(st.session_state.results)
 
 
-# ── AI evaluation function ─────────────────────────────────────
 def evaluate_cvs(api_key: str, jd: str, candidates: list) -> list:
     client = anthropic.Anthropic(api_key=api_key)
 
@@ -208,7 +233,6 @@ Sort by score descending. Be honest — scores must meaningfully differentiate c
         return []
 
 
-# ── Results display ────────────────────────────────────────────
 def display_results(results: list):
     st.divider()
     st.subheader("Shortlist — Ranked by Match Score")
