@@ -146,20 +146,11 @@ def show_cv_evaluator(api_key: str = None):
     st.markdown("#### Step 1 — Enter job requirements")
     st.caption("Write each requirement on a new line starting with a dash ( - )")
 
-    if st.button("📂 Load demo job description"):
-        st.session_state["jd_text"] = """- B.Tech or B.E. in Mechanical or Electrical Engineering
-- Minimum 3 years experience in steel plant or heavy manufacturing
-- Knowledge of hydraulic and pneumatic systems
-- Preventive maintenance planning experience
-- SAP PM module experience preferred
-- ISO 45001 safety certification preferred
-- Ability to work rotating shifts
-- Team coordination and reporting skills"""
-        st.rerun()
+    
 
     jd = st.text_area(
         "Job description / requirements",
-        value=st.session_state.get("jd_text", ""),
+        value="",
         height=180,
         placeholder=(
             "- B.Tech Mechanical or Electrical Engineering\n"
