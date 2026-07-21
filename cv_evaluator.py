@@ -138,11 +138,7 @@ def show_cv_evaluator(api_key: str = None):
         "The system will score and rank each candidate automatically."
     )
 
-    st.info(
-        "⚡ Running in **offline mode** — keyword-based scoring engine. "
-        "No internet or API required.",
-        icon="🔒"
-    )
+    
 
     st.markdown("---")
 
