@@ -1,11 +1,6 @@
 import streamlit as st
-import json
 import io
-
-try:
-    import google.generativeai as genai
-except ImportError:
-    genai = None
+import re
 
 try:
     import pdfplumber
@@ -18,19 +13,7 @@ except ImportError:
     Document = None
 
 
-DEMO_JD = """Job: Maintenance Engineer — Cold Rolling Mill, Tata Steel Jamshedpur
-
-Requirements:
-- B.Tech / B.E. in Mechanical or Electrical Engineering
-- Minimum 3 years experience in steel plant or heavy manufacturing
-- Knowledge of hydraulic and pneumatic systems
-- Preventive maintenance planning experience
-- SAP PM module experience preferred
-- ISO 45001 / safety certification preferred
-- Ability to work rotating shifts
-- Team coordination and reporting skills"""
-
-
+# ── Text extraction ────────────────────────────────────────────
 def extract_text_from_file(uploaded_file) -> str:
     name = uploaded_file.name.lower()
     raw  = uploaded_file.read()
@@ -45,7 +28,7 @@ def extract_text_from_file(uploaded_file) -> str:
                     page_text = page.extract_text()
                     if page_text:
                         text += page_text + "\n"
-            return text.strip() if text.strip() else "Could not extract text from this PDF."
+            return text.strip() if text.strip() else "Could not extract text from PDF."
         except Exception as e:
             return f"PDF read error: {e}"
 
@@ -55,7 +38,7 @@ def extract_text_from_file(uploaded_file) -> str:
         try:
             doc  = Document(io.BytesIO(raw))
             text = "\n".join([p.text for p in doc.paragraphs if p.text.strip()])
-            return text.strip() if text.strip() else "Could not extract text from this DOCX."
+            return text.strip() if text.strip() else "Could not extract text from DOCX."
         except Exception as e:
             return f"DOCX read error: {e}"
 
@@ -66,37 +49,128 @@ def extract_text_from_file(uploaded_file) -> str:
             return raw.decode("latin-1").strip()
 
     else:
-        return f"Unsupported file type. Please upload PDF, DOCX, or TXT."
+        return f"Unsupported file type: {name}. Please upload PDF, DOCX, or TXT."
 
 
-def show_cv_evaluator(api_key: str):
+# ── Keyword-based scoring engine ───────────────────────────────
+def parse_requirements(jd_text: str) -> list:
+    """Extract individual requirements from the job description."""
+    requirements = []
+    for line in jd_text.strip().split('\n'):
+        line = line.strip()
+        # Remove bullet characters and dashes
+        line = re.sub(r'^[-•*·]\s*', '', line).strip()
+        if len(line) > 5:
+            requirements.append(line)
+    return requirements
+
+
+def extract_keywords(requirement: str) -> list:
+    """Extract searchable keywords from a single requirement."""
+    # Remove common filler words
+    stopwords = {
+        'a', 'an', 'the', 'and', 'or', 'of', 'in', 'with',
+        'for', 'to', 'is', 'be', 'are', 'at', 'on', 'as',
+        'preferred', 'required', 'experience', 'knowledge',
+        'ability', 'skills', 'minimum', 'least', 'good', 'strong'
+    }
+    words = re.findall(r'[a-zA-Z0-9+#./-]+', requirement.lower())
+    keywords = [w for w in words if w not in stopwords and len(w) > 2]
+    return keywords
+
+
+def score_cv(cv_text: str, requirements: list) -> dict:
+    """
+    Score a CV against a list of requirements using keyword matching.
+    Returns score (0-100), matched list, partial list, missing list.
+    """
+    cv_lower = cv_text.lower()
+    matched  = []
+    partial  = []
+    missing  = []
+
+    for req in requirements:
+        keywords = extract_keywords(req)
+        if not keywords:
+            continue
+
+        # Count how many keywords from this requirement appear in the CV
+        hits = sum(1 for kw in keywords if kw in cv_lower)
+        ratio = hits / len(keywords) if keywords else 0
+
+        if ratio >= 0.6:
+            matched.append(req[:60] + ('...' if len(req) > 60 else ''))
+        elif ratio >= 0.25:
+            partial.append(req[:60] + ('...' if len(req) > 60 else ''))
+        else:
+            missing.append(req[:60] + ('...' if len(req) > 60 else ''))
+
+    total = len(requirements)
+    if total == 0:
+        return {"score": 0, "matched": [], "partial": [], "missing": []}
+
+    # Score = full matches + half credit for partial
+    raw_score = (len(matched) + 0.5 * len(partial)) / total * 100
+    score = round(min(raw_score, 100))
+
+    if score >= 70:
+        verdict = "Strong match"
+    elif score >= 40:
+        verdict = "Partial match"
+    else:
+        verdict = "Weak match"
+
+    return {
+        "score":   score,
+        "verdict": verdict,
+        "matched": matched,
+        "partial": partial,
+        "missing": missing,
+    }
+
+
+# ── Main UI ────────────────────────────────────────────────────
+def show_cv_evaluator(api_key: str = None):
 
     st.subheader("AI-Powered CV Evaluator & Shortlist")
-    st.caption("Upload CV files for each candidate. The AI will score and rank them.")
+    st.caption(
+        "Upload candidate CVs and enter job requirements. "
+        "The system will score and rank each candidate automatically."
+    )
 
-    if genai is None:
-        st.error("google-generativeai not installed. Run: pip install google-generativeai")
-        return
+    st.info(
+        "⚡ Running in **offline mode** — keyword-based scoring engine. "
+        "No internet or API required.",
+        icon="🔒"
+    )
 
     st.markdown("---")
 
     # ── Step 1: Job requirements ───────────────────────────────
     st.markdown("#### Step 1 — Enter job requirements")
+    st.caption("Write each requirement on a new line starting with a dash ( - )")
 
     if st.button("📂 Load demo job description"):
-        st.session_state["jd_text"] = DEMO_JD
+        st.session_state["jd_text"] = """- B.Tech or B.E. in Mechanical or Electrical Engineering
+- Minimum 3 years experience in steel plant or heavy manufacturing
+- Knowledge of hydraulic and pneumatic systems
+- Preventive maintenance planning experience
+- SAP PM module experience preferred
+- ISO 45001 safety certification preferred
+- Ability to work rotating shifts
+- Team coordination and reporting skills"""
         st.rerun()
 
     jd = st.text_area(
-        "Paste the job description or list requirements here",
+        "Job description / requirements",
         value=st.session_state.get("jd_text", ""),
         height=180,
         placeholder=(
-            "Example:\n"
             "- B.Tech Mechanical or Electrical Engineering\n"
-            "- 3+ years in steel plant\n"
+            "- 3+ years in steel plant or manufacturing\n"
             "- SAP PM module experience\n"
-            "- ISO 45001 certification"
+            "- ISO 45001 safety certification\n"
+            "- Rotating shift flexibility"
         ),
         key="jd_area"
     )
@@ -131,7 +205,7 @@ def show_cv_evaluator(api_key: str):
             name = st.text_input(
                 "Candidate name",
                 key=f"cand_name_{i}",
-                placeholder=f"e.g. Rahul Sharma"
+                placeholder="e.g. Rahul Sharma"
             )
 
         with col2:
@@ -148,8 +222,8 @@ def show_cv_evaluator(api_key: str):
             if cv_text.startswith("ERROR") or cv_text.startswith("Unsupported"):
                 st.error(cv_text)
             else:
-                st.success(f"✅ Read successfully — {len(cv_text)} characters extracted")
-                with st.expander(f"Preview — {name}"):
+                st.success(f"✅ CV read — {len(cv_text)} characters extracted")
+                with st.expander(f"Preview extracted text — {name}"):
                     st.text(cv_text[:800] + ("..." if len(cv_text) > 800 else ""))
                 candidates.append({"name": name.strip(), "cv": cv_text})
 
@@ -165,76 +239,60 @@ def show_cv_evaluator(api_key: str):
 
         if not jd.strip():
             st.error("Please enter job requirements in Step 1.")
-            return
+            st.stop()
+
+        requirements = parse_requirements(jd)
+        if len(requirements) == 0:
+            st.error("Could not read any requirements. Make sure each is on its own line.")
+            st.stop()
 
         if len(candidates) == 0:
-            st.error("Please enter candidate names and upload their CVs.")
-            return
+            st.error("Please enter at least one candidate name and upload their CV.")
+            st.stop()
 
-        with st.spinner(f"AI is evaluating {len(candidates)} candidate(s)... please wait"):
-            results = evaluate_cvs(api_key, jd, candidates)
-            st.session_state["last_results"] = results
+        if len(candidates) < int(num):
+            st.warning(
+                f"Only {len(candidates)} of {int(num)} candidates ready. "
+                "Evaluating those with both name and CV uploaded."
+            )
 
+        # Score all candidates
+        results = []
+        for c in candidates:
+            scored = score_cv(c["cv"], requirements)
+            scored["name"] = c["name"]
+            # Auto-generate summary
+            scored["summary"] = (
+                f"Meets {len(scored['matched'])} of {len(requirements)} requirements "
+                f"with {len(scored['partial'])} partial matches."
+            )
+            results.append(scored)
+
+        # Sort by score descending
+        results = sorted(results, key=lambda x: x["score"], reverse=True)
+        st.session_state["last_results"] = results
+
+    # ── Show results ───────────────────────────────────────────
     if st.session_state.get("last_results"):
         display_results(st.session_state["last_results"])
 
 
-def evaluate_cvs(api_key: str, jd: str, candidates: list) -> list:
-
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-2.0-flash")
-
-    candidates_text = "\n\n".join([
-        f"--- Candidate {i+1}: {c['name']} ---\n{c['cv']}"
-        for i, c in enumerate(candidates)
-    ])
-
-    prompt = f"""You are an expert HR recruiter at Tata Steel. Evaluate each candidate CV against the job requirements below.
-
-JOB REQUIREMENTS:
-{jd}
-
-CANDIDATES:
-{candidates_text}
-
-Return ONLY a valid JSON array. No explanation, no markdown, no backticks whatsoever.
-
-Each object must have:
-- "name": candidate name as string
-- "score": integer 0-100 representing % match
-- "verdict": exactly one of "Strong match", "Partial match", or "Weak match"
-- "matched": list of up to 5 short phrases for requirements clearly met
-- "missing": list of up to 4 short phrases for key requirements NOT met
-- "partial": list of up to 3 short phrases for partially met requirements
-- "summary": one sentence max 20 words explaining their ranking
-
-Sort by score descending. Be honest and specific."""
-
-    try:
-        response = model.generate_content(prompt)
-        raw      = response.text
-        clean    = raw.replace("```json", "").replace("```", "").strip()
-        data     = json.loads(clean)
-        return sorted(data, key=lambda x: x.get("score", 0), reverse=True)
-
-    except json.JSONDecodeError as e:
-        st.error(f"Could not parse AI response: {e}")
-        return []
-    except Exception as e:
-        st.error(f"Gemini API error: {e}")
-        return []
-
-
+# ── Results display ────────────────────────────────────────────
 def display_results(results: list):
     st.divider()
     st.subheader("📋 Shortlist — Ranked by Match Score")
 
+    strong  = sum(1 for r in results if r.get("score", 0) >= 70)
+    partial = sum(1 for r in results if 40 <= r.get("score", 0) < 70)
+    weak    = sum(1 for r in results if r.get("score", 0) < 40)
+
     m1, m2, m3 = st.columns(3)
-    m1.metric("🟢 Strong (≥70%)",    sum(1 for r in results if r.get("score",0) >= 70))
-    m2.metric("🟡 Partial (40–69%)", sum(1 for r in results if 40 <= r.get("score",0) < 70))
-    m3.metric("🔴 Weak (<40%)",      sum(1 for r in results if r.get("score",0) < 40))
+    m1.metric("🟢 Strong matches (≥70%)", strong)
+    m2.metric("🟡 Partial matches (40–69%)", partial)
+    m3.metric("🔴 Weak matches (<40%)", weak)
 
     st.markdown("---")
+
     rank_icons = ["🥇", "🥈", "🥉"]
 
     for i, r in enumerate(results):
@@ -255,17 +313,21 @@ def display_results(results: list):
 
         with st.container(border=True):
             c1, c2 = st.columns([0.08, 0.92])
+
             with c1:
                 st.markdown(f"### {icon}")
+
             with c2:
                 st.markdown(f"**#{i+1} — {name}**")
                 st.caption(summary)
+
                 p1, p2 = st.columns([4, 1])
                 with p1:
                     st.progress(score / 100)
                 with p2:
                     st.markdown(f"**{score}%**")
                     st.caption(verdict)
+
                 if matched:
                     st.markdown("✅ **Meets:** " + " · ".join(matched))
                 if partial_reqs:
@@ -275,17 +337,24 @@ def display_results(results: list):
 
     # ── Download shortlist ─────────────────────────────────────
     st.markdown("---")
-    lines = ["TATA STEEL — CV EVALUATION SHORTLIST\n"]
+    lines = ["TATA STEEL — CV EVALUATION SHORTLIST\n",
+             "Scored using keyword-based matching engine\n",
+             "=" * 50 + "\n"]
+
     for i, r in enumerate(results):
         lines.append(
-            f"#{i+1} {r.get('name','')} — {r.get('score',0)}% — {r.get('verdict','')}\n"
+            f"#{i+1}  {r.get('name','')}  —  {r.get('score',0)}%  —  {r.get('verdict','')}\n"
             f"Summary: {r.get('summary','')}\n"
-            f"Meets: {', '.join(r.get('matched',[]))}\n"
+            f"Meets:   {', '.join(r.get('matched',[]))}\n"
+            f"Partial: {', '.join(r.get('partial',[]))}\n"
             f"Missing: {', '.join(r.get('missing',[]))}\n"
+            + "-" * 40 + "\n"
         )
+
     st.download_button(
         label="⬇️ Download shortlist as TXT",
         data="\n".join(lines),
         file_name="tata_steel_shortlist.txt",
-        mime="text/plain"
+        mime="text/plain",
+        use_container_width=True
     )
